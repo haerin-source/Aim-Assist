@@ -1,504 +1,254 @@
--- Aim-Assist | Mobile + PC
--- FOV / ESP / Smooth / Wallcheck / Teamcheck — all configurable
+--[[
+    Modern loader + env cloak
+]]
 
-local Players          = game:GetService("Players")
-local RunService       = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
-local TweenService     = game:GetService("TweenService")
-local CoreGui          = game:GetService("CoreGui")
-local LocalPlayer      = Players.LocalPlayer
-local Camera           = workspace.CurrentCamera
+repeat
+    task.wait()
+until game:IsLoaded()-- env cloak (hide executor globals from game callers)
+----------------------------------------------------------------do
+    local Players = game:GetService("Players")
+    local LocalPlayer = Players.LocalPlayer
 
-----------------------------------------------------------------
--- CONFIG
-----------------------------------------------------------------
-local Config = {
-    MenuTitle        = "Aim-Assist",
-    MenuSize         = Vector2.new(280, 360),
-    Accent           = Color3.fromRGB(0, 170, 255),
-    Bg               = Color3.fromRGB(18, 18, 22),
-    TopBar           = Color3.fromRGB(28, 28, 34),
-    Text             = Color3.fromRGB(240, 240, 245),
-    TextDim          = Color3.fromRGB(140, 140, 155),
-    Corner           = 10,
-    Transparency     = 0.05,
+    local GEN = (getgenv and getgenv()) or _G
 
-    ESPEnabled       = false,
-    ESPFill          = Color3.fromRGB(255, 40, 40),
-    ESPOutline       = Color3.fromRGB(255, 255, 255),
-    ESPFillTrans     = 0.55,
-    ESPOutlineTrans  = 0,
-    ESPTeamCheck     = false,
+    local HookFunction = GEN.hookfunction or hookfunction
+    local NewCClosure = GEN.newcclosure or newcclosure
+    local CheckCaller = GEN.checkcaller or checkcaller
+    local GetCallingScript = GEN.getcallingscript or getcallingscript
 
-    AimbotEnabled    = false,
-    AimbotFOV        = 180,
-    AimbotSmooth     = 0.18,
-    AimbotPart       = "Head",
-    AimbotWallCheck  = true,
-    AimbotTeamCheck  = false,
-    AimbotVisibleOnly= true,
+    if type(HookFunction) == "function" and type(NewCClosure) == "function" and type(getfenv) == "function" then
+        local MARKER = {
+            hookfunction = true, hookmetamethod = true, newcclosure = true, clonefunction = true,
+            checkcaller = true, getnamecallmethod = true, getcallingscript = true,
+            isexecutorclosure = true, isourclosure = true, iscclosure = true, islclosure = true,
+            getgc = true, getreg = true, getrawmetatable = true, setreadonly = true, isreadonly = true,
+            make_writeable = true, make_readonly = true, getconnections = true, getcallbackvalue = true,
+            getscriptclosure = true, getscriptbytecode = true, getsenv = true, getmenv = true,
+            getloadedmodules = true, getscripts = true, getrunningscripts = true,
+            getconstants = true, getconstant = true, setconstant = true,
+            getupvalues = true, getupvalue = true, setupvalue = true,
+            getprotos = true, getproto = true, setproto = true,
+            getgenv = true, getrenv = true, identifyexecutor = true, getexecutorname = true,
+            syn = true, KRNL_LOADED = true, fluxus = true, SENTINEL_LOADED = true,
+            readfile = true, writefile = true, appendfile = true, loadfile = true, listfiles = true,
+            makefolder = true, delfile = true, delfolder = true, isfile = true, isfolder = true,
+            setclipboard = true, toclipboard = true, request = true, http_request = true, httprequest = true,
+            WebSocket = true, gethui = true, protect_gui = true, unprotect_gui = true, cloneref = true,
+            fireclickdetector = true, fireproximityprompt = true, firetouchinterest = true, firesignal = true,
+            gethiddenproperty = true, sethiddenproperty = true, setscriptable = true,
+            Drawing = true, queue_on_teleport = true, queueonteleport = true,
+        }
 
-    FOVVisible       = true,
-    FOVColor         = Color3.fromRGB(0, 170, 255),
-    FOVThickness     = 1.5,
-    FOVFilled        = false,
-    FOVTransparency  = 0.35,
+        local function callerIsGame()
+            if type(GetCallingScript) == "function" then
+                local ok, scr = pcall(GetCallingScript)
+                if ok and typeof(scr) == "Instance" then
+                    return true, scr
+                end
+            end
+            if type(CheckCaller) == "function" then
+                local ok, own = pcall(CheckCaller)
+                if ok then
+                    return not own, nil
+                end
+            end
+            return true, nil
+        end
+
+        local function copySanitized(src, selfRef)
+            if type(src) ~= "table" then
+                return src
+            end
+            local out = {}
+            local k, v = next(src, nil)
+            while k ~= nil do
+                local hide = (type(k) == "string" and MARKER[k] == true)
+                if not hide then
+                    if k == "_G" and type(v) == "table" then
+                        out[k] = out
+                    else
+                        out[k] = v
+                    end
+                end
+                k, v = next(src, k)
+            end
+            if selfRef and src == selfRef then
+                out._G = out
+            end
+            return out
+        end
+
+        local OldRawget
+        OldRawget = HookFunction(rawget, NewCClosure(function(t, k)
+            local gameCaller = callerIsGame()
+            if gameCaller and type(k) == "string" and MARKER[k] then
+                return nil
+            end
+            return OldRawget(t, k)
+        end))
+
+        local OldGetfenv
+        OldGetfenv = HookFunction(getfenv, NewCClosure(function(target)
+            local query = target
+            if type(target) == "number" then
+                query = target + 1
+            elseif target == nil then
+                query = 2
+            end
+            local env = OldGetfenv(query)
+            local gameCaller = callerIsGame()
+            if gameCaller and type(env) == "table" then
+                return copySanitized(env, GEN)
+            end
+            return env
+        end))
+
+        local OriginalGetgenv = rawget(GEN, "getgenv")
+        local OriginalGetrenv = rawget(GEN, "getrenv")
+
+        if type(OriginalGetgenv) == "function" and OriginalGetgenv ~= getfenv then
+            local OldGetgenv
+            OldGetgenv = HookFunction(OriginalGetgenv, NewCClosure(function(...)
+                local env = OldGetgenv(...)
+                if callerIsGame() and type(env) == "table" then
+                    return copySanitized(env, GEN)
+                end
+                return env
+            end))
+        end
+
+        if type(OriginalGetrenv) == "function" and OriginalGetrenv ~= OriginalGetgenv and OriginalGetrenv ~= getfenv then
+            local OldGetrenv
+            OldGetrenv = HookFunction(OriginalGetrenv, NewCClosure(function(...)
+                local env = OldGetrenv(...)
+                if callerIsGame() and type(env) == "table" then
+                    return copySanitized(env, GEN)
+                end
+                return env
+            end))
+        end
+
+        pcall(function()
+            local kickMethod = LocalPlayer.Kick
+            if type(kickMethod) == "function" then
+                local OldKick
+                OldKick = HookFunction(kickMethod, NewCClosure(function(self, ...)
+                    if callerIsGame() and self == LocalPlayer then
+                        return nil
+                    end
+                    return OldKick(self, ...)
+                end))
+            end
+        end)
+    end
+end-- Modern loader
+----------------------------------------------------------------local QueueOnTeleport = queue_on_teleport or function() end
+local CloneRef = cloneref or function(value) return value end
+local Players = CloneRef(game:GetService("Players"))
+
+shared.ModernURL = "https://exploit.plus/"
+
+local ModernFile = {}
+
+function ModernFile.readfile(path)
+    if shared.ModernDev and isfile and isfile(path) then
+        return readfile(path)
+    end
+    local body = game:HttpGet(shared.ModernURL .. path)
+    if body and body:find("^<!DOCTYPE html>") then
+        return nil
+    end
+    return body
+end
+
+function ModernFile.loadfile(path)
+    local source
+    if shared.ModernDev and isfile and isfile(path) then
+        source = readfile(path)
+    else
+        source = game:HttpGet(shared.ModernURL .. path)
+    end
+    if not source or source:find("^<!DOCTYPE html>") then
+        Players.LocalPlayer:Kick("Network Issue")
+        return false
+    end
+    local result
+    xpcall(function()
+        result = loadstring(source, path)()
+    end, function()
+        Players.LocalPlayer:Kick()
+    end)
+    return result
+end
+
+function ModernFile.downloadfile(path)
+    if isfile and isfile(path) then
+        return path
+    end
+    local ok, body = pcall(function()
+        return game:HttpGet(shared.ModernURL .. path)
+    end)
+    if not ok then
+        error(body)
+    end
+    writefile(path, body)
+    return path
+end
+
+function ModernFile.RunOnActors(source)
+    if not getactors or not run_on_actor then
+        return
+    end
+    for _, actor in getactors() do
+        run_on_actor(actor, source)
+    end
+end
+
+shared.ModernFile = ModernFile
+shared.ModernConfig = {
+    PatchFunction = false,
 }
 
-----------------------------------------------------------------
--- STATE
-----------------------------------------------------------------
-local State = {
-    MenuOpen  = true,
-    Dragging  = false,
-    DragStart = nil,
-    StartPos  = nil,
-    IsHolding = false,
-}
-
-----------------------------------------------------------------
--- HELPERS
-----------------------------------------------------------------
-local function SameTeam(plr)
-    if LocalPlayer.Team and plr.Team then
-        return LocalPlayer.Team == plr.Team
-    end
-    return false
+if getgenv then
+    getgenv().ModernFile = shared.ModernFile
+    getgenv().ModernConfig = shared.ModernConfig
 end
 
-local function Visible(part)
-    if not LocalPlayer.Character then return false end
-    local params = RaycastParams.new()
-    params.FilterDescendantsInstances = {LocalPlayer.Character, Camera}
-    params.FilterType = Enum.RaycastFilterType.Exclude
-    local origin = Camera.CFrame.Position
-    local result = workspace:Raycast(origin, part.Position - origin, params)
-    return (not result) or result.Instance:IsDescendantOf(part.Parent)
+if makefolder and isfolder and not isfolder("Modern") then
+    makefolder("Modern")
 end
 
-local function ClosestInFOV()
-    local best, bestDist = nil, Config.AimbotFOV
-    if not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
-        return nil
-    end
-    local center = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
+if shared.ModernLoading then
+    return
+end
+shared.ModernLoading = true
 
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr == LocalPlayer then continue end
-        if Config.AimbotTeamCheck and SameTeam(plr) then continue end
-        local char = plr.Character
-        if not char then continue end
-        local hum  = char:FindFirstChildOfClass("Humanoid")
-        local part = char:FindFirstChild(Config.AimbotPart)
-        if not hum or hum.Health <= 0 or not part then continue end
-
-        local screen, onScreen = Camera:WorldToViewportPoint(part.Position)
-        if not onScreen then continue end
-        if Config.AimbotVisibleOnly and not Visible(part) then continue end
-        if Config.AimbotWallCheck and not Visible(part) then continue end
-
-        local d = (Vector2.new(screen.X, screen.Y) - center).Magnitude
-        if d < bestDist then
-            bestDist = d
-            best = part
-        end
-    end
-    return best
+if shared.ModernConfig.PatchFunction then
+    local patchPath = "Modern/Library/PatchFunction.lua"
+    local patchSource = ModernFile.readfile(patchPath)
+    ModernFile.RunOnActors(patchSource)
+    ModernFile.loadfile(patchPath)
 end
 
-----------------------------------------------------------------
--- UI
-----------------------------------------------------------------
-local function New(class, props, parent)
-    local o = Instance.new(class)
-    for k,v in pairs(props) do o[k] = v end
-    if parent then o.Parent = parent end
-    return o
-end
+ModernFile.loadfile("Modern/Gui.lua")
 
-local Gui = New("ScreenGui", {
-    Name = "AimAssist",
-    ResetOnSpawn = false,
-    ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
-}, CoreGui)
+local Modern = shared.Modern
 
-local OpenBtn = New("TextButton", {
-    BackgroundColor3 = Config.Accent,
-    Position = UDim2.fromOffset(12, 50),
-    Size = UDim2.fromOffset(100, 36),
-    Font = Enum.Font.GothamBold,
-    Text = "MENU",
-    TextColor3 = Color3.new(1,1,1),
-    TextSize = 15,
-    AutoButtonColor = false,
-}, Gui)
-New("UICorner", {CornerRadius = UDim.new(0,8)}, OpenBtn)
+ModernFile.loadfile("Modern/Games/Universal.lua")
+ModernFile.loadfile("Modern/Games/" .. game.PlaceId .. ".lua")
 
-local Main = New("Frame", {
-    BackgroundColor3 = Config.Bg,
-    BackgroundTransparency = Config.Transparency,
-    Position = UDim2.fromScale(0.35, 0.2),
-    Size = UDim2.fromOffset(Config.MenuSize.X, Config.MenuSize.Y),
-    Active = true,
-}, Gui)
-New("UICorner", {CornerRadius = UDim.new(0, Config.Corner)}, Main)
-New("UIStroke", {Color = Color3.fromRGB(55,55,65), Thickness = 1, Transparency = 0.4}, Main)
+Modern:Load()
 
-local Top = New("Frame", {
-    BackgroundColor3 = Config.TopBar,
-    Size = UDim2.new(1,0,0,42),
-}, Main)
-New("UICorner", {CornerRadius = UDim.new(0, Config.Corner)}, Top)
-
-New("TextLabel", {
-    BackgroundTransparency = 1,
-    Position = UDim2.fromOffset(14,0),
-    Size = UDim2.new(1,-50,1,0),
-    Font = Enum.Font.GothamBold,
-    Text = Config.MenuTitle,
-    TextColor3 = Config.Text,
-    TextSize = 15,
-    TextXAlignment = Enum.TextXAlignment.Left,
-}, Top)
-
-local CloseBtn = New("TextButton", {
-    BackgroundTransparency = 1,
-    Position = UDim2.new(1,-38,0,0),
-    Size = UDim2.fromOffset(38,42),
-    Font = Enum.Font.GothamBold,
-    Text = "×",
-    TextColor3 = Config.TextDim,
-    TextSize = 22,
-    AutoButtonColor = false,
-}, Top)
-
-local TabBar = New("Frame", {
-    BackgroundTransparency = 1,
-    Position = UDim2.fromOffset(0,46),
-    Size = UDim2.new(1,0,0,32),
-}, Main)
-New("UIListLayout", {
-    FillDirection = Enum.FillDirection.Horizontal,
-    HorizontalAlignment = Enum.HorizontalAlignment.Center,
-    Padding = UDim.new(0,6),
-}, TabBar)
-
-local Content = New("ScrollingFrame", {
-    BackgroundTransparency = 1,
-    Position = UDim2.fromOffset(0,84),
-    Size = UDim2.new(1,0,1,-92),
-    CanvasSize = UDim2.new(0,0,0,0),
-    ScrollBarThickness = 3,
-    ScrollBarImageColor3 = Config.Accent,
-    BorderSizePixel = 0,
-}, Main)
-local ContentLayout = New("UIListLayout", {
-    Padding = UDim.new(0,8),
-    HorizontalAlignment = Enum.HorizontalAlignment.Center,
-    SortOrder = Enum.SortOrder.LayoutOrder,
-}, Content)
-New("UIPadding", {PaddingTop = UDim.new(0,6), PaddingBottom = UDim.new(0,10)}, Content)
-
-local Pages, TabButtons = {}, {}
-
-local function MakeTab(name)
-    local btn = New("TextButton", {
-        BackgroundColor3 = Color3.fromRGB(35,35,42),
-        Size = UDim2.fromOffset(80,28),
-        Font = Enum.Font.GothamBold,
-        Text = name,
-        TextColor3 = Config.TextDim,
-        TextSize = 12,
-        AutoButtonColor = false,
-    }, TabBar)
-    New("UICorner", {CornerRadius = UDim.new(0,6)}, btn)
-
-    local page = New("Frame", {
-        BackgroundTransparency = 1,
-        Size = UDim2.new(1,0,0,0),
-        Visible = false,
-        AutomaticSize = Enum.AutomaticSize.Y,
-    }, Content)
-    New("UIListLayout", {
-        Padding = UDim.new(0,8),
-        HorizontalAlignment = Enum.HorizontalAlignment.Center,
-        SortOrder = Enum.SortOrder.LayoutOrder,
-    }, page)
-
-    Pages[name] = page
-    TabButtons[name] = btn
-
-    btn.MouseButton1Click:Connect(function()
-        for n,p in pairs(Pages) do
-            p.Visible = (n == name)
-            TabButtons[n].BackgroundColor3 = (n == name) and Config.Accent or Color3.fromRGB(35,35,42)
-            TabButtons[n].TextColor3 = (n == name) and Color3.new(1,1,1) or Config.TextDim
-        end
-        task.wait()
-        Content.CanvasSize = UDim2.new(0,0,0, page.AbsoluteSize.Y + 24)
-    end)
-    return page
-end
-
-local CombatPage   = MakeTab("Combat")
-local VisualsPage  = MakeTab("Visuals")
-local SettingsPage = MakeTab("Settings")
-
-Pages["Combat"].Visible = true
-TabButtons["Combat"].BackgroundColor3 = Config.Accent
-TabButtons["Combat"].TextColor3 = Color3.new(1,1,1)
-
-----------------------------------------------------------------
--- ELEMENTS
-----------------------------------------------------------------
-local function Section(parent, text)
-    local f = New("Frame", {BackgroundTransparency = 1, Size = UDim2.new(1,-20,0,18)}, parent)
-    New("TextLabel", {
-        BackgroundTransparency = 1,
-        Size = UDim2.new(1,0,1,0),
-        Font = Enum.Font.GothamBold,
-        Text = text,
-        TextColor3 = Config.TextDim,
-        TextSize = 11,
-        TextXAlignment = Enum.TextXAlignment.Left,
-    }, f)
-end
-
-local function Toggle(parent, title, get, set)
-    local frame = New("Frame", {
-        BackgroundColor3 = Color3.fromRGB(30,30,36),
-        Size = UDim2.new(1,-20,0,40),
-    }, parent)
-    New("UICorner", {CornerRadius = UDim.new(0,8)}, frame)
-
-    New("TextLabel", {
-        BackgroundTransparency = 1,
-        Position = UDim2.fromOffset(12,0),
-        Size = UDim2.new(1,-60,1,0),
-        Font = Enum.Font.Gotham,
-        Text = title,
-        TextColor3 = Config.Text,
-        TextSize = 13,
-        TextXAlignment = Enum.TextXAlignment.Left,
-    }, frame)
-
-    local btn = New("TextButton", {
-        BackgroundColor3 = get() and Config.Accent or Color3.fromRGB(55,55,65),
-        Position = UDim2.new(1,-48,0.5,-11),
-        Size = UDim2.fromOffset(36,22),
-        Text = "",
-        AutoButtonColor = false,
-    }, frame)
-    New("UICorner", {CornerRadius = UDim.new(1,0)}, btn)
-
-    local knob = New("Frame", {
-        BackgroundColor3 = Color3.new(1,1,1),
-        Position = get() and UDim2.new(1,-18,0.5,-7) or UDim2.fromOffset(4,4),
-        Size = UDim2.fromOffset(14,14),
-    }, btn)
-    New("UICorner", {CornerRadius = UDim.new(1,0)}, knob)
-
-    btn.MouseButton1Click:Connect(function()
-        local n = not get()
-        set(n)
-        btn.BackgroundColor3 = n and Config.Accent or Color3.fromRGB(55,55,65)
-        TweenService:Create(knob, TweenInfo.new(0.15), {
-            Position = n and UDim2.new(1,-18,0.5,-7) or UDim2.fromOffset(4,4)
-        }):Play()
-    end)
-end
-
-local function Slider(parent, title, min, max, get, set)
-    local frame = New("Frame", {
-        BackgroundColor3 = Color3.fromRGB(30,30,36),
-        Size = UDim2.new(1,-20,0,54),
-    }, parent)
-    New("UICorner", {CornerRadius = UDim.new(0,8)}, frame)
-
-    local label = New("TextLabel", {
-        BackgroundTransparency = 1,
-        Position = UDim2.fromOffset(12,4),
-        Size = UDim2.new(1,-24,0,18),
-        Font = Enum.Font.Gotham,
-        Text = title .. ": " .. tostring(get()),
-        TextColor3 = Config.Text,
-        TextSize = 12,
-        TextXAlignment = Enum.TextXAlignment.Left,
-    }, frame)
-
-    local bar = New("Frame", {
-        BackgroundColor3 = Color3.fromRGB(45,45,55),
-        Position = UDim2.fromOffset(12,30),
-        Size = UDim2.new(1,-24,0,6),
-    }, frame)
-    New("UICorner", {CornerRadius = UDim.new(1,0)}, bar)
-
-    local fill = New("Frame", {
-        BackgroundColor3 = Config.Accent,
-        Size = UDim2.new(math.clamp((get()-min)/(max-min),0,1),0,1,0),
-    }, bar)
-    New("UICorner", {CornerRadius = UDim.new(1,0)}, fill)
-
-    local hold = false
-    bar.InputBegan:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-            hold = true
-        end
-    end)
-    UserInputService.InputEnded:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-            hold = false
-        end
-    end)
-    UserInputService.InputChanged:Connect(function(i)
-        if hold and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
-            local rel = math.clamp((i.Position.X - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
-            local val = math.floor(min + (max-min)*rel + 0.5)
-            set(val)
-            fill.Size = UDim2.new(rel,0,1,0)
-            label.Text = title .. ": " .. tostring(val)
-        end
-    end)
-end
-
-----------------------------------------------------------------
--- PAGES
-----------------------------------------------------------------
-Section(CombatPage, "AIMBOT")
-Toggle(CombatPage, "Enable Aimbot", function() return Config.AimbotEnabled end, function(v) Config.AimbotEnabled = v end)
-Toggle(CombatPage, "Wall Check", function() return Config.AimbotWallCheck end, function(v) Config.AimbotWallCheck = v end)
-Toggle(CombatPage, "Team Check", function() return Config.AimbotTeamCheck end, function(v) Config.AimbotTeamCheck = v end)
-Toggle(CombatPage, "Visible Only", function() return Config.AimbotVisibleOnly end, function(v) Config.AimbotVisibleOnly = v end)
-Slider(CombatPage, "FOV Size", 40, 400, function() return Config.AimbotFOV end, function(v) Config.AimbotFOV = v end)
-Slider(CombatPage, "Smooth", 0, 100, function() return math.floor(Config.AimbotSmooth*100) end, function(v) Config.AimbotSmooth = v/100 end)
-
-Section(VisualsPage, "ESP")
-Toggle(VisualsPage, "Enable ESP", function() return Config.ESPEnabled end, function(v)
-    Config.ESPEnabled = v
-    for _,p in ipairs(Players:GetPlayers()) do
-        if p.Character and p.Character:FindFirstChild("ESPHighlight") then
-            p.Character.ESPHighlight.Enabled = v and not (Config.ESPTeamCheck and SameTeam(p))
-        end
-    end
-end)
-Toggle(VisualsPage, "Team Check", function() return Config.ESPTeamCheck end, function(v) Config.ESPTeamCheck = v end)
-Slider(VisualsPage, "Fill Transparency", 0, 100, function() return math.floor(Config.ESPFillTrans*100) end, function(v)
-    Config.ESPFillTrans = v/100
-    for _,p in ipairs(Players:GetPlayers()) do
-        if p.Character and p.Character:FindFirstChild("ESPHighlight") then
-            p.Character.ESPHighlight.FillTransparency = Config.ESPFillTrans
-        end
-    end
+task.spawn(function()
+    repeat
+        Modern:Save()
+        task.wait(10)
+    until not Modern.Loaded
 end)
 
-Section(VisualsPage, "FOV CIRCLE")
-Toggle(VisualsPage, "Show FOV", function() return Config.FOVVisible end, function(v) Config.FOVVisible = v end)
-Slider(VisualsPage, "FOV Thickness", 1, 6, function() return Config.FOVThickness end, function(v) Config.FOVThickness = v end)
-Slider(VisualsPage, "FOV Transparency", 0, 100, function() return math.floor(Config.FOVTransparency*100) end, function(v) Config.FOVTransparency = v/100 end)
+shared.ModernLoading = nil
 
-Section(SettingsPage, "MENU")
-Slider(SettingsPage, "UI Transparency", 0, 80, function() return math.floor(Config.Transparency*100) end, function(v)
-    Config.Transparency = v/100
-    Main.BackgroundTransparency = Config.Transparency
-end)
-
-----------------------------------------------------------------
--- FOV + ESP
-----------------------------------------------------------------
-local FOV = Drawing.new("Circle")
-FOV.Thickness = Config.FOVThickness
-FOV.NumSides = 64
-FOV.Radius = Config.AimbotFOV
-FOV.Filled = Config.FOVFilled
-FOV.Color = Config.FOVColor
-FOV.Transparency = 1 - Config.FOVTransparency
-FOV.Visible = false
-
-local function ApplyESP(plr)
-    if plr == LocalPlayer then return end
-    local function setup(char)
-        if char:FindFirstChild("ESPHighlight") then char.ESPHighlight:Destroy() end
-        local h = Instance.new("Highlight")
-        h.Name = "ESPHighlight"
-        h.FillColor = Config.ESPFill
-        h.OutlineColor = Config.ESPOutline
-        h.FillTransparency = Config.ESPFillTrans
-        h.OutlineTransparency = Config.ESPOutlineTrans
-        h.Enabled = Config.ESPEnabled and not (Config.ESPTeamCheck and SameTeam(plr))
-        h.Parent = char
-    end
-    if plr.Character then setup(plr.Character) end
-    plr.CharacterAdded:Connect(setup)
-end
-
-for _,p in ipairs(Players:GetPlayers()) do ApplyESP(p) end
-Players.PlayerAdded:Connect(ApplyESP)
-
-----------------------------------------------------------------
--- INPUT
-----------------------------------------------------------------
-OpenBtn.MouseButton1Click:Connect(function()
-    State.MenuOpen = not State.MenuOpen
-    Main.Visible = State.MenuOpen
-end)
-CloseBtn.MouseButton1Click:Connect(function()
-    State.MenuOpen = false
-    Main.Visible = false
-end)
-
-Top.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        State.Dragging = true
-        State.DragStart = input.Position
-        State.StartPos = Main.Position
-        input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End then
-                State.Dragging = false
-            end
-        end)
-    end
-end)
-
-UserInputService.InputChanged:Connect(function(input)
-    if State.Dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-        local d = input.Position - State.DragStart
-        Main.Position = UDim2.new(
-            State.StartPos.X.Scale, State.StartPos.X.Offset + d.X,
-            State.StartPos.Y.Scale, State.StartPos.Y.Offset + d.Y
-        )
-    end
-end)
-
-UserInputService.InputBegan:Connect(function(input, gpe)
-    if gpe then return end
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        State.IsHolding = true
-    end
-end)
-UserInputService.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        State.IsHolding = false
-    end
-end)
-
-----------------------------------------------------------------
--- LOOP
-----------------------------------------------------------------
-RunService.RenderStepped:Connect(function()
-    FOV.Visible = Config.FOVVisible and Config.AimbotEnabled
-    FOV.Position = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
-    FOV.Radius = Config.AimbotFOV
-    FOV.Color = Config.FOVColor
-    FOV.Thickness = Config.FOVThickness
-    FOV.Transparency = 1 - Config.FOVTransparency
-
-    if Config.AimbotEnabled and State.IsHolding then
-        local t = ClosestInFOV()
-        if t then
-            local s = math.clamp(Config.AimbotSmooth, 0, 0.95)
-            Camera.CFrame = Camera.CFrame:Lerp(CFrame.new(Camera.CFrame.Position, t.Position), 1 - s)
-        end
-    end
-end)
-
-print("[Aim-Assist] loaded")
+Modern:Notify({
+    Text = "Finished Loading",
+    Duration = 8,
+})
